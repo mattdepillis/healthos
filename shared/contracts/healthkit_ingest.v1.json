@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "description": "HealthKit ingest payload contract (v1). This will evolve.",
+  "required": [
+    "schema_version",
+    "event_id",
+    "user_id",
+    "source",
+    "sent_at",
+    "device_id",
+    "workouts",
+    "daily_metrics"
+  ]
+}
