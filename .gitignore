@@ -29,6 +29,10 @@ DerivedData/
 .swiftpm/
 .build/
 
-# If you add CocoaPods/Carthage later:
+# Xcode build output
+*.xcarchive
+*.ipa
+
+# CocoaPods/Carthage:
 Pods/
 Carthage/
