@@ -10,9 +10,22 @@
 		3135DDED2F02091B0025D3B7 /* HealthOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HealthOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		31C5F0192F0223D100C7C614 /* Exceptions for "HealthOS" folder in "HealthOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3135DDEC2F02091B0025D3B7 /* HealthOS */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		3135DDEF2F02091B0025D3B7 /* HealthOS */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				31C5F0192F0223D100C7C614 /* Exceptions for "HealthOS" folder in "HealthOS" target */,
+			);
 			path = HealthOS;
 			sourceTree = "<group>";
 		};
@@ -255,7 +268,11 @@
 				DEVELOPMENT_TEAM = GRH8M5XC68;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HealthOS/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "HealthOS reads your Health data to show your metrics and trends.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "HealthOS may write Health data you explicitly choose to save.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -289,7 +306,11 @@
 				DEVELOPMENT_TEAM = GRH8M5XC68;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HealthOS/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "HealthOS reads your Health data to show your metrics and trends.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "HealthOS may write Health data you explicitly choose to save.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
