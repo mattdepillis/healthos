@@ -5,6 +5,7 @@
 //  Created by Matt DePillis on 12/28/25.
 //
 
+import HealthKit
 import SwiftUI
 
 struct ContentView: View {
@@ -17,6 +18,16 @@ struct ContentView: View {
     private func milesString(fromMeters meters: Double) -> String {
         let miles = meters / 1609.34
         return String(format: "%.2f mi", miles)
+    }
+    
+    private func hkSummary(for ring: RingsSummary, in summaries: [HKActivitySummary]) -> HKActivitySummary? {
+        let cal = Calendar.current
+        let ringDay = cal.startOfDay(for: ring.date)
+
+        return summaries.first { s in
+            guard let d = cal.date(from: s.dateComponents(for: cal)) else { return false }
+            return cal.startOfDay(for: d) == ringDay
+        }
     }
 
     var body: some View {
@@ -70,11 +81,43 @@ struct ContentView: View {
                         } else {
                             VStack(spacing: 12) {
                                 ForEach(hk.rings7d.suffix(7)) { r in
-                                    RingsCard(ring: r)
+                                    let s = hkSummary(for: r, in: hk.ringSummaries7d)
+
+                                    HStack(alignment: .top, spacing: 12) {
+                                        if let s {
+                                            ActivityRingView(summary: s)
+                                                .frame(width: 56, height: 56)
+                                        } else {
+                                            // fallback placeholder if we can't match
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .fill(.secondary.opacity(0.15))
+                                                .frame(width: 56, height: 56)
+                                        }
+
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text(r.date, style: .date)
+                                                .font(.headline)
+
+                                            Text("Move: \(Int(r.move))/\(Int(r.moveGoal)) kcal")
+                                                .foregroundStyle(.secondary)
+
+                                            Text("Exercise: \(Int(r.exerciseMinutes))/\(Int(r.exerciseGoalMinutes)) min")
+                                                .foregroundStyle(.secondary)
+
+                                            Text("Stand: \(Int(r.standHours))/\(Int(r.standGoalHours)) hr")
+                                                .foregroundStyle(.secondary)
+                                        }
+
+                                        Spacer()
+                                    }
+                                    .padding(12)
+                                    .background(.ultraThinMaterial)
+                                    .clipShape(RoundedRectangle(cornerRadius: 16))
                                 }
                             }
                         }
                     }
+
 
                     Divider()
 
