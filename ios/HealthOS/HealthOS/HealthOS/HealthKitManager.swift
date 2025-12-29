@@ -41,6 +41,7 @@ final class HealthKitManager: ObservableObject {
     @Published var isAuthorized: Bool = false
     @Published var statusText: String = "Not authorized"
     @Published var rings7d: [RingsSummary] = []
+    @Published var ringSummaries7d: [HKActivitySummary] = []
     @Published var activeEnergyToday: Double? = nil
     @Published var workouts7d: [WorkoutSummary] = []
 
@@ -86,12 +87,13 @@ final class HealthKitManager: ObservableObject {
         async let workouts = fetchWorkouts(daysBack: 7)
 
         do {
-            let (ringsVal, energyVal, workoutsVal) = try await (rings, energy, workouts)
-            rings7d = ringsVal
+            let ((ringsPretty, ringsHK), energyVal, workoutsVal) = try await (rings, energy, workouts)
+            rings7d = ringsPretty
+            ringSummaries7d = ringsHK
             activeEnergyToday = energyVal
             workouts7d = workoutsVal
 
-            statusText = "Fetched ✅ (rings \(ringsVal.count), workouts \(workoutsVal.count))"
+            statusText = "Fetched ✅ (rings \(ringsPretty.count), workouts \(workoutsVal.count))"
         } catch {
             statusText = "Fetch failed: \(error.localizedDescription)"
         }
@@ -99,12 +101,12 @@ final class HealthKitManager: ObservableObject {
 
     // MARK: - Rings (Activity Summary)
 
-    private func fetchRings(daysBack: Int) async throws -> [RingsSummary] {
+    private func fetchRings(daysBack: Int) async throws -> ([RingsSummary], [HKActivitySummary]) {
         let cal = Calendar.current
         let todayStart = cal.startOfDay(for: Date())
 
-        var all: [RingsSummary] = []
-        all.reserveCapacity(daysBack)
+        var allPretty: [RingsSummary] = []
+        var allHK: [HKActivitySummary] = []
 
         for offset in 0..<daysBack {
             guard let date = cal.date(byAdding: .day, value: -offset, to: todayStart) else { continue }
@@ -113,47 +115,41 @@ final class HealthKitManager: ObservableObject {
 
             let predicate = HKQuery.predicateForActivitySummary(with: comps)
 
-            let daySummaries: [RingsSummary] = try await withCheckedThrowingContinuation { cont in
+            let summaries: [HKActivitySummary] = try await withCheckedThrowingContinuation { cont in
                 let q = HKActivitySummaryQuery(predicate: predicate) { _, summaries, error in
-                    if let error = error {
-                        cont.resume(throwing: error)
-                        return
-                    }
-
-                    let mapped: [RingsSummary] = (summaries ?? []).compactMap { summary in
-                        guard let d = cal.date(from: summary.dateComponents(for: cal)) else { return nil }
-
-                        let move = summary.activeEnergyBurned.doubleValue(for: .kilocalorie())
-                        let moveGoal = summary.activeEnergyBurnedGoal.doubleValue(for: .kilocalorie())
-
-                        let exercise = summary.appleExerciseTime.doubleValue(for: .minute())
-                        let exerciseGoal = summary.appleExerciseTimeGoal.doubleValue(for: .minute())
-
-                        let stand = summary.appleStandHours.doubleValue(for: .count())
-                        let standGoal = summary.appleStandHoursGoal.doubleValue(for: .count())
-
-                        return RingsSummary(
-                            date: d,
-                            move: move,
-                            moveGoal: moveGoal,
-                            exerciseMinutes: exercise,
-                            exerciseGoalMinutes: exerciseGoal,
-                            standHours: stand,
-                            standGoalHours: standGoal
-                        )
-                    }
-
-                    cont.resume(returning: mapped)
+                    if let error = error { cont.resume(throwing: error); return }
+                    cont.resume(returning: summaries ?? [])
                 }
-
                 self.healthStore.execute(q)
             }
 
-            all.append(contentsOf: daySummaries)
+            allHK.append(contentsOf: summaries)
+
+            let mapped = summaries.compactMap { s -> RingsSummary? in
+                guard let d = cal.date(from: s.dateComponents(for: cal)) else { return nil }
+                return RingsSummary(
+                    date: d,
+                    move: s.activeEnergyBurned.doubleValue(for: .kilocalorie()),
+                    moveGoal: s.activeEnergyBurnedGoal.doubleValue(for: .kilocalorie()),
+                    exerciseMinutes: s.appleExerciseTime.doubleValue(for: .minute()),
+                    exerciseGoalMinutes: s.appleExerciseTimeGoal.doubleValue(for: .minute()),
+                    standHours: s.appleStandHours.doubleValue(for: .count()),
+                    standGoalHours: s.appleStandHoursGoal.doubleValue(for: .count())
+                )
+            }
+
+            allPretty.append(contentsOf: mapped)
         }
 
-        return all.sorted { $0.date < $1.date }
+        allPretty.sort { $0.date < $1.date }
+        allHK.sort {
+            let d0 = cal.date(from: $0.dateComponents(for: cal)) ?? .distantPast
+            let d1 = cal.date(from: $1.dateComponents(for: cal)) ?? .distantPast
+            return d0 < d1
+        }
+        return (allPretty, allHK)
     }
+
 
     // MARK: - Active energy today
 
