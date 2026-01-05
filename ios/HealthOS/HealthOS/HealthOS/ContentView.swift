@@ -19,15 +19,14 @@ struct ContentView: View {
         let miles = meters / 1609.34
         return String(format: "%.2f mi", miles)
     }
-    
-    private func hkSummary(for ring: RingsSummary, in summaries: [HKActivitySummary]) -> HKActivitySummary? {
-        let cal = Calendar.current
-        let ringDay = cal.startOfDay(for: ring.date)
 
-        return summaries.first { s in
-            guard let d = cal.date(from: s.dateComponents(for: cal)) else { return false }
-            return cal.startOfDay(for: d) == ringDay
-        }
+    // Build a fast lookup map (day -> HKActivitySummary) to avoid O(n^2) scans during rendering.
+    private var ringSummaryByDay: [Date: HKActivitySummary] {
+        let cal = Calendar.current
+        return Dictionary(uniqueKeysWithValues: hk.ringSummaries7d.compactMap { s in
+            guard let d = cal.date(from: s.dateComponents(for: cal)) else { return nil }
+            return (cal.startOfDay(for: d), s)
+        })
     }
 
     var body: some View {
@@ -46,12 +45,13 @@ struct ContentView: View {
                             Task { await hk.requestAuthorization() }
                         }
                         .buttonStyle(.borderedProminent)
+                        .disabled(hk.isFetching)
 
                         Button("Fetch Core Snapshot") {
                             Task { await hk.fetchCoreSnapshot() }
                         }
                         .buttonStyle(.bordered)
-                        .disabled(!hk.isAuthorized)
+                        .disabled(!hk.isAuthorized || hk.isFetching)
                     }
 
                     Divider()
@@ -81,14 +81,15 @@ struct ContentView: View {
                         } else {
                             VStack(spacing: 12) {
                                 ForEach(hk.rings7d.suffix(7)) { r in
-                                    let s = hkSummary(for: r, in: hk.ringSummaries7d)
+                                    let cal = Calendar.current
+                                    let key = cal.startOfDay(for: r.date)
+                                    let s = ringSummaryByDay[key]
 
                                     HStack(alignment: .top, spacing: 12) {
                                         if let s {
                                             ActivityRingView(summary: s)
                                                 .frame(width: 56, height: 56)
                                         } else {
-                                            // fallback placeholder if we can't match
                                             RoundedRectangle(cornerRadius: 12)
                                                 .fill(.secondary.opacity(0.15))
                                                 .frame(width: 56, height: 56)
@@ -118,6 +119,68 @@ struct ContentView: View {
                         }
                     }
 
+                    Divider()
+
+                    // Steps
+                    MetricSection(
+                        title: "Steps (last 7 days)",
+                        points: hk.steps7d.map { (date: $0.date, value: $0.value) },
+                        bigValue: { v in "\(Int(v))" },
+                        rowRight: { v in "\(Int(v)) steps" },
+                        deltaSuffix: "steps"
+                    )
+
+                    // Distance
+                    MetricSection(
+                        title: "Distance (last 7 days)",
+                        points: hk.distance7dMeters.map { (date: $0.date, value: $0.value) },
+                        bigValue: { meters in milesString(fromMeters: meters) },
+                        rowRight: { meters in milesString(fromMeters: meters) },
+                        deltaSuffix: "mi",
+                        deltaTransform: { meters in meters / 1609.34 }
+                    )
+
+                    // Resting Heart Rate
+                    MetricSection(
+                        title: "Resting Heart Rate (last 7 days)",
+                        points: hk.restingHR7d.map { (date: $0.date, value: $0.value) },
+                        bigValue: { v in "\(Int(v)) bpm" },
+                        rowRight: { v in "\(Int(v)) bpm resting" },
+                        deltaSuffix: "bpm"
+                    )
+
+                    // HRV
+                    MetricSection(
+                        title: "HRV (SDNN) (last 7 days)",
+                        points: hk.hrv7d.map { (date: $0.date, value: $0.value) },
+                        bigValue: { v in "\(Int(v)) ms" },
+                        rowRight: { v in "\(Int(v)) ms SDNN" },
+                        deltaSuffix: "ms"
+                    )
+
+                    // Sleep (optional: show explanatory empty state if basically all zeros)
+                    let sleepPoints: [(date: Date, value: Double)] =
+                        hk.sleep7dHours.map { (date: $0.date, value: $0.value) }
+
+                    if sleepPoints.allSatisfy({ $0.value == 0 }) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Sleep (last 7 days)")
+                                .font(.title3)
+                                .bold()
+
+                            Text("No sleep data found. (Common if you don’t wear your watch to bed.)")
+                                .foregroundStyle(.secondary)
+                                .font(.subheadline)
+                        }
+                    } else {
+                        MetricSection(
+                            title: "Sleep (last 7 days)",
+                            points: sleepPoints,
+                            bigValue: { hours in String(format: "%.1f hr", hours) },
+                            rowRight: { hours in String(format: "%.1f hr asleep", hours) },
+                            deltaSuffix: "hr"
+                        )
+                    }
 
                     Divider()
 
@@ -150,49 +213,84 @@ struct ContentView: View {
                 .padding()
             }
             .navigationTitle("HealthOS Explorer")
+            .overlay {
+                if hk.isFetching {
+                    ZStack {
+                        Color.black.opacity(0.08).ignoresSafeArea()
+                        ProgressView("Loading HealthKit…")
+                            .padding(14)
+                            .background(.ultraThinMaterial)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                }
+            }
         }
     }
 }
 
-// MARK: - Rings Card
+// MARK: - Reusable Metric Section
 
-private struct RingsCard: View {
-    let ring: RingsSummary
+private struct MetricSection: View {
+    let title: String
+    let points: [(date: Date, value: Double)]
+    let bigValue: (Double) -> String
+    let rowRight: (Double) -> String
+    let deltaSuffix: String
+
+    // Optional transform if you want delta displayed in different unit than stored (e.g. meters -> miles)
+    var deltaTransform: (Double) -> Double = { $0 }
+
+    private func latest() -> Double? { points.last?.value }
+
+    private func delta() -> Double? {
+        guard points.count >= 2 else { return nil }
+        return deltaTransform(points[points.count - 1].value) - deltaTransform(points[points.count - 2].value)
+    }
+
+    private func deltaView(_ d: Double?) -> some View {
+        guard let d else { return AnyView(EmptyView()) }
+        let isNeg = d < 0
+        let absVal = abs(d)
+
+        let formatted: String = (absVal >= 10 || deltaSuffix.contains("steps") || deltaSuffix.contains("bpm"))
+            ? "\(Int(absVal))"
+            : String(format: "%.2f", absVal)
+
+        return AnyView(
+            Text("\(isNeg ? "−" : "+")\(formatted) \(deltaSuffix)")
+                .foregroundStyle(isNeg ? .red : .green)
+                .font(.subheadline)
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(ring.date.formatted(date: .abbreviated, time: .omitted))
-                .font(.headline)
+            Text(title)
+                .font(.title3)
+                .bold()
 
-            ringRow(label: "Move", value: ring.move, goal: ring.moveGoal, unit: "kcal", tint: .red)
-            ringRow(label: "Exercise", value: ring.exerciseMinutes, goal: ring.exerciseGoalMinutes, unit: "min", tint: .green)
-            ringRow(label: "Stand", value: ring.standHours, goal: ring.standGoalHours, unit: "hr", tint: .blue)
-        }
-        .padding()
-        .background(.ultraThinMaterial)
-        .cornerRadius(12)
-    }
-
-    @ViewBuilder
-    private func ringRow(label: String, value: Double, goal: Double, unit: String, tint: Color) -> some View {
-        let pct = (goal > 0) ? min(value / goal, 1.0) : 0.0
-
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(label)
-                    .font(.subheadline)
-                Spacer()
-                Text("\(Int(value)) \(unit)")
-                    .font(.subheadline)
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(latest().map(bigValue) ?? "—")
+                    .font(.title)
                     .bold()
+
+                deltaView(delta())
             }
 
-            ProgressView(value: pct)
-                .tint(tint)
-
-            Text("Goal: \(Int(goal)) \(unit)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            VStack(spacing: 12) {
+                ForEach(points, id: \.date) { p in
+                    HStack {
+                        Text(p.date.formatted(date: .long, time: .omitted))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(p.value == 0 ? "—" : rowRight(p.value))
+                            .font(.headline)
+                    }
+                    .padding(14)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                }
+            }
         }
     }
 }
@@ -230,4 +328,3 @@ private struct WorkoutRow: View {
         }
     }
 }
-
