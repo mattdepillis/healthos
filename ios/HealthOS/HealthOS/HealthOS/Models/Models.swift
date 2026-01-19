@@ -24,7 +24,7 @@ struct RingsSummary: Identifiable {
     let standGoalHours: Double
 }
 
-struct WorkoutSummary: Identifiable {
+struct WorkoutSummary: Identifiable, Equatable {
     let id = UUID()
     let type: String
     let start: Date
@@ -32,6 +32,15 @@ struct WorkoutSummary: Identifiable {
     let durationMinutes: Double
     let activeEnergy: Double?
     let distance: Double?
+}
+
+struct SleepStageBreakdown: Identifiable {
+    let id = UUID()
+    let date: Date
+    let coreHours: Double
+    let deepHours: Double
+    let remHours: Double
+    let unspecifiedHours: Double
 }
 
 extension HKWorkoutActivityType {

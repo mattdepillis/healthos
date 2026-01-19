@@ -16,6 +16,8 @@ import Combine
 final class HealthKitManager: ObservableObject {
 
     private let healthStore = HKHealthStore()
+    private let dailyWindowDays = 90
+    private let workoutsWindowDays = 30
 
     @Published var isAuthorized: Bool = false
     @Published var isFetching: Bool = false
@@ -41,6 +43,11 @@ final class HealthKitManager: ObservableObject {
     @Published var flightsClimbed7d: [(date: Date, value: Double)] = []
     @Published var mindfulMinutes7d: [(date: Date, value: Double)] = []
     @Published var vo2MaxRecent: [(date: Date, value: Double)] = []
+    @Published var weight7dLbs: [(date: Date, value: Double)] = []
+    @Published var bodyFat7dPct: [(date: Date, value: Double)] = []
+    @Published var respiratoryRate7d: [(date: Date, value: Double)] = []
+    @Published var bloodOxygen7dPct: [(date: Date, value: Double)] = []
+    @Published var sleepStages7d: [SleepStageBreakdown] = []
 
     // Requests HealthKit read authorization for all data types used by this manager.
     func requestAuthorization() async {
@@ -59,6 +66,10 @@ final class HealthKitManager: ObservableObject {
         let mindfulType = HKObjectType.categoryType(forIdentifier: .mindfulSession)!
         let flightsType = HKObjectType.quantityType(forIdentifier: .flightsClimbed)!
         let vo2Type = HKObjectType.quantityType(forIdentifier: .vo2Max)!
+        let weightType = HKObjectType.quantityType(forIdentifier: .bodyMass)!
+        let bodyFatType = HKObjectType.quantityType(forIdentifier: .bodyFatPercentage)!
+        let respiratoryType = HKObjectType.quantityType(forIdentifier: .respiratoryRate)!
+        let bloodOxygenType = HKObjectType.quantityType(forIdentifier: .oxygenSaturation)!
         let workoutType = HKObjectType.workoutType()
         let activitySummaryType = HKObjectType.activitySummaryType()
 
@@ -72,6 +83,10 @@ final class HealthKitManager: ObservableObject {
             mindfulType,
             flightsType,
             vo2Type,
+            weightType,
+            bodyFatType,
+            respiratoryType,
+            bloodOxygenType,
             workoutType,
             activitySummaryType
         ]
@@ -99,17 +114,17 @@ final class HealthKitManager: ObservableObject {
         defer { isFetching = false }
 
         // Kick off requests in parallel
-        async let ringsTask = fetchRings(daysBack: 7)
+        async let ringsTask = fetchRings(daysBack: dailyWindowDays)
         async let energyTask = fetchActiveEnergyBurnedToday()
-        async let workoutsTask = fetchWorkouts(daysBack: 7)
+        async let workoutsTask = fetchWorkouts(daysBack: workoutsWindowDays)
 
-        async let stepsTask = fetchDailyCumulativeSum(.stepCount, unit: .count(), daysBack: 7)
-        async let distanceTask = fetchDailyCumulativeSum(.distanceWalkingRunning, unit: .meter(), daysBack: 7)
-        async let sleepTask = fetchSleepHours7d(daysBack: 7)
-        async let rhrTask = fetchDailyMostRecentPerDay(.restingHeartRate, unit: .count().unitDivided(by: .minute()), daysBack: 7)
-        async let hrvTask = fetchDailyMostRecentPerDay(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), daysBack: 7)
-        async let flightsTask = fetchDailyCumulativeSum(.flightsClimbed, unit: .count(), daysBack: 7)
-        async let mindfulTask = fetchDailyCategoryMinutes(.mindfulSession, daysBack: 7)
+        async let stepsTask = fetchDailyCumulativeSum(.stepCount, unit: .count(), daysBack: dailyWindowDays)
+        async let distanceTask = fetchDailyCumulativeSum(.distanceWalkingRunning, unit: .meter(), daysBack: dailyWindowDays)
+        async let sleepTask = fetchSleepHours7d(daysBack: dailyWindowDays)
+        async let rhrTask = fetchDailyMostRecentPerDay(.restingHeartRate, unit: .count().unitDivided(by: .minute()), daysBack: dailyWindowDays)
+        async let hrvTask = fetchDailyMostRecentPerDay(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), daysBack: dailyWindowDays)
+        async let flightsTask = fetchDailyCumulativeSum(.flightsClimbed, unit: .count(), daysBack: dailyWindowDays)
+        async let mindfulTask = fetchDailyCategoryMinutes(.mindfulSession, daysBack: dailyWindowDays)
         async let vo2Task = fetchRecentQuantitySamples(
             .vo2Max,
             unit: HKUnit.literUnit(with: .milli)
@@ -118,6 +133,11 @@ final class HealthKitManager: ObservableObject {
             daysBack: 180,
             limit: 8
         )
+        async let weightTask = fetchDailyMostRecentPerDay(.bodyMass, unit: .pound(), daysBack: dailyWindowDays)
+        async let bodyFatTask = fetchDailyMostRecentPerDay(.bodyFatPercentage, unit: .percent(), daysBack: dailyWindowDays)
+        async let respiratoryTask = fetchDailyMostRecentPerDay(.respiratoryRate, unit: .count().unitDivided(by: .minute()), daysBack: dailyWindowDays)
+        async let bloodOxygenTask = fetchDailyMostRecentPerDay(.oxygenSaturation, unit: .percent(), daysBack: dailyWindowDays)
+        async let sleepStagesTask = fetchSleepStageBreakdown(daysBack: dailyWindowDays)
 
         do {
             let ((ringsPretty, ringsHK),
@@ -130,7 +150,12 @@ final class HealthKitManager: ObservableObject {
                  hrvVal,
                  flightsVal,
                  mindfulVal,
-                 vo2Val) = try await (
+                 vo2Val,
+                 weightVal,
+                 bodyFatVal,
+                 respiratoryVal,
+                 bloodOxygenVal,
+                 sleepStagesVal) = try await (
                     ringsTask,
                     energyTask,
                     workoutsTask,
@@ -141,7 +166,12 @@ final class HealthKitManager: ObservableObject {
                     hrvTask,
                     flightsTask,
                     mindfulTask,
-                    vo2Task
+                    vo2Task,
+                    weightTask,
+                    bodyFatTask,
+                    respiratoryTask,
+                    bloodOxygenTask,
+                    sleepStagesTask
                  )
 
             // Publish in one “commit” block
@@ -158,13 +188,18 @@ final class HealthKitManager: ObservableObject {
             flightsClimbed7d = flightsVal
             mindfulMinutes7d = mindfulVal
             vo2MaxRecent = vo2Val
+            weight7dLbs = weightVal
+            bodyFat7dPct = bodyFatVal
+            respiratoryRate7d = respiratoryVal
+            bloodOxygen7dPct = bloodOxygenVal
+            sleepStages7d = sleepStagesVal
 
-            let activitySeries = buildActivitySeries(from: ringsPretty, daysBack: 7)
+            let activitySeries = buildActivitySeries(from: ringsPretty, daysBack: dailyWindowDays)
             activeEnergy7dKcal = activitySeries.move
             exerciseMinutes7d = activitySeries.exercise
             standHours7d = activitySeries.stand
 
-            statusText = "Fetched ✅ (rings \(ringsPretty.count), workouts \(workoutsVal.count))"
+            statusText = "Fetched ✅ (days \(dailyWindowDays), workouts \(workoutsVal.count))"
         } catch {
             statusText = "Fetch failed: \(error.localizedDescription)"
         }
@@ -545,6 +580,77 @@ final class HealthKitManager: ObservableObject {
             guard let day = cal.date(byAdding: .day, value: i, to: firstDay) else { continue }
             let hours = (totals[day] ?? 0) / 3600.0
             out.append((date: day, hours: hours))
+        }
+
+        return out
+    }
+
+    // Fetches per-day sleep stage totals (hours) for the last N days.
+    private func fetchSleepStageBreakdown(daysBack: Int) async throws -> [SleepStageBreakdown] {
+        let (start, end, cal) = dayRange(daysBack: daysBack)
+        let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
+
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+
+        let samples: [HKCategorySample] = try await withCheckedThrowingContinuation { cont in
+            let q = HKSampleQuery(
+                sampleType: type,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [sort]
+            ) { _, samples, error in
+                if let error = error { cont.resume(throwing: error); return }
+                cont.resume(returning: (samples as? [HKCategorySample]) ?? [])
+            }
+            self.healthStore.execute(q)
+        }
+
+        struct Totals {
+            var core: TimeInterval = 0
+            var deep: TimeInterval = 0
+            var rem: TimeInterval = 0
+            var unspecified: TimeInterval = 0
+        }
+
+        var totalsByDay: [Date: Totals] = [:]
+        for s in samples {
+            let day = cal.startOfDay(for: s.startDate)
+            let duration = s.endDate.timeIntervalSince(s.startDate)
+            var totals = totalsByDay[day] ?? Totals()
+
+            switch s.value {
+            case HKCategoryValueSleepAnalysis.asleepCore.rawValue:
+                totals.core += duration
+            case HKCategoryValueSleepAnalysis.asleepDeep.rawValue:
+                totals.deep += duration
+            case HKCategoryValueSleepAnalysis.asleepREM.rawValue:
+                totals.rem += duration
+            case HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue:
+                totals.unspecified += duration
+            default:
+                break
+            }
+
+            totalsByDay[day] = totals
+        }
+
+        var out: [SleepStageBreakdown] = []
+        out.reserveCapacity(daysBack)
+
+        let firstDay = cal.startOfDay(for: start)
+        for i in 0..<daysBack {
+            guard let day = cal.date(byAdding: .day, value: i, to: firstDay) else { continue }
+            let totals = totalsByDay[day] ?? Totals()
+            out.append(
+                SleepStageBreakdown(
+                    date: day,
+                    coreHours: totals.core / 3600.0,
+                    deepHours: totals.deep / 3600.0,
+                    remHours: totals.rem / 3600.0,
+                    unspecifiedHours: totals.unspecified / 3600.0
+                )
+            )
         }
 
         return out
