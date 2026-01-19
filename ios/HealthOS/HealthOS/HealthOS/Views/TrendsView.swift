@@ -11,7 +11,7 @@ import SwiftUI
 struct TrendsView: View {
     @ObservedObject var hk: HealthKitManager
 
-    @State private var selectedMetric: TrendMetric = .ringsAll
+    @State private var selectedMetric: TrendMetric = .moveRing
     @State private var selectedRange: TrendRange = .days30
 
     var body: some View {
@@ -84,26 +84,6 @@ struct TrendsView: View {
             } else {
                 chartView(config: config)
 
-                if let note = config.note {
-                    Text(note)
-                        .foregroundStyle(.secondary)
-                        .font(.footnote)
-                }
-
-                if config.series.count > 1 {
-                    HStack(spacing: 12) {
-                        ForEach(config.series) { s in
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(s.color)
-                                    .frame(width: 8, height: 8)
-                                Text(s.name)
-                                    .font(.footnote)
-                            }
-                        }
-                    }
-                }
-
                 if let summary = trendSummary(for: series) {
                     Text(summary)
                         .foregroundStyle(.secondary)
@@ -124,32 +104,22 @@ struct TrendsView: View {
                     )
                     .foregroundStyle(s.color)
                     .interpolationMethod(.linear)
-
-                    PointMark(
-                        x: .value("Date", p.date),
-                        y: .value("Value", p.value)
-                    )
-                    .foregroundStyle(s.color)
                 }
             }
         }
         .frame(height: 220)
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 4)) { value in
+            AxisMarks(values: .automatic(desiredCount: 3)) { value in
                 AxisGridLine()
                 AxisTick()
                 AxisValueLabel(format: .dateTime.month().day())
             }
         }
         .chartYAxis {
-            AxisMarks(position: .leading) { value in
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                 AxisGridLine()
                 AxisTick()
-                if config.isNormalized, let doubleValue = value.as(Double.self) {
-                    AxisValueLabel("\(Int(doubleValue * 100))%")
-                } else {
-                    AxisValueLabel()
-                }
+                AxisValueLabel()
             }
         }
         .background(.ultraThinMaterial)
@@ -171,57 +141,36 @@ struct TrendsView: View {
         }
 
         switch selectedMetric {
-        case .ringsAll:
-            let move = filterPoints(hk.activeEnergy7dKcal)
-            let exercise = filterPoints(hk.exerciseMinutes7d)
-            let stand = filterPoints(hk.standHours7d)
-            let normalized = normalize([move, exercise, stand])
-            return TrendChartConfig(
-                series: [
-                    TrendSeries(name: "Move", color: .red, points: normalized[0]),
-                    TrendSeries(name: "Exercise", color: .green, points: normalized[1]),
-                    TrendSeries(name: "Stand", color: .blue, points: normalized[2])
-                ],
-                yDomain: 0...1,
-                note: "Normalized to each metric's max in the selected range.",
-                isNormalized: true
-            )
         case .moveRing:
             return TrendChartConfig(
                 series: [TrendSeries(name: "Move", color: .red, points: filterPoints(hk.activeEnergy7dKcal))],
-                yDomain: nil,
-                note: nil,
-                isNormalized: false
+                yDomain: nil
+            )
+        case .exerciseRing:
+            return TrendChartConfig(
+                series: [TrendSeries(name: "Exercise", color: .green, points: filterPoints(hk.exerciseMinutes7d))],
+                yDomain: nil
+            )
+        case .standRing:
+            return TrendChartConfig(
+                series: [TrendSeries(name: "Stand", color: .blue, points: filterPoints(hk.standHours7d))],
+                yDomain: nil
             )
         case .sleep:
             return TrendChartConfig(
                 series: [TrendSeries(name: "Sleep", color: .indigo, points: filterPoints(hk.sleep7dHours))],
-                yDomain: nil,
-                note: nil,
-                isNormalized: false
+                yDomain: nil
             )
         case .vo2Max:
             return TrendChartConfig(
                 series: [TrendSeries(name: "VO2 Max", color: .pink, points: filterPoints(hk.vo2MaxRecent))],
-                yDomain: nil,
-                note: nil,
-                isNormalized: false
+                yDomain: nil
             )
         case .steps:
             return TrendChartConfig(
                 series: [TrendSeries(name: "Steps", color: .orange, points: filterPoints(hk.steps7d))],
-                yDomain: nil,
-                note: nil,
-                isNormalized: false
+                yDomain: nil
             )
-        }
-    }
-
-    private func normalize(_ sets: [[(date: Date, value: Double)]]) -> [[(date: Date, value: Double)]] {
-        return sets.map { points in
-            let maxVal = points.map(\.value).max() ?? 0
-            guard maxVal > 0 else { return points.map { (date: $0.date, value: 0) } }
-            return points.map { (date: $0.date, value: $0.value / maxVal) }
         }
     }
 
@@ -237,16 +186,18 @@ struct TrendsView: View {
 }
 
 private enum TrendMetric: String, CaseIterable {
-    case ringsAll
     case moveRing
+    case exerciseRing
+    case standRing
     case sleep
     case vo2Max
     case steps
 
     var title: String {
         switch self {
-        case .ringsAll: return "Rings (All)"
         case .moveRing: return "Move Ring"
+        case .exerciseRing: return "Exercise Ring"
+        case .standRing: return "Stand Ring"
         case .sleep: return "Sleep"
         case .vo2Max: return "VO2 Max"
         case .steps: return "Steps"
@@ -283,6 +234,4 @@ private struct TrendSeries: Identifiable {
 private struct TrendChartConfig {
     let series: [TrendSeries]
     let yDomain: ClosedRange<Double>?
-    let note: String?
-    let isNormalized: Bool
 }

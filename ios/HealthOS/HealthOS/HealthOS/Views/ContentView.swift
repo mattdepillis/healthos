@@ -26,6 +26,11 @@ struct ContentView: View {
                 .tabItem {
                     Label("Coach", systemImage: "sparkles")
                 }
+
+            NutritionView()
+                .tabItem {
+                    Label("Nutrition", systemImage: "leaf")
+                }
         }
     }
 }

@@ -25,10 +25,13 @@ struct HealthHeaderView: View {
 
                 Button("Fetch Snapshot") {
                     Task { await hk.fetchCoreSnapshot() }
-                }
-                .buttonStyle(.bordered)
-                .disabled(!hk.isAuthorized || hk.isFetching)
             }
+            .buttonStyle(.bordered)
+            .disabled(!hk.isAuthorized || hk.isFetching)
+        }
+        .onAppear {
+            Task { await hk.refreshAuthorizationStatus() }
         }
     }
+}
 }

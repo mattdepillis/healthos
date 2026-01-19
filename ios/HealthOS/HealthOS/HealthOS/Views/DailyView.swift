@@ -368,7 +368,7 @@ struct DailyView: View {
     }
 
     private func maybePromptWorkoutDetails(for day: Date) {
-        let cal = Calendar.current
+        _ = Calendar.current
         let todayKey = day.formatted(.dateTime.year().month().day())
         guard todayKey != lastWorkoutPromptDate else { return }
         if !workouts(on: day).isEmpty {
