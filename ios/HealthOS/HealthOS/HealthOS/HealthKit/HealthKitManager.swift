@@ -49,14 +49,7 @@ final class HealthKitManager: ObservableObject {
     @Published var bloodOxygen7dPct: [(date: Date, value: Double)] = []
     @Published var sleepStages7d: [SleepStageBreakdown] = []
 
-    // Requests HealthKit read authorization for all data types used by this manager.
-    func requestAuthorization() async {
-        guard HKHealthStore.isHealthDataAvailable() else {
-            statusText = "Health data not available on this device."
-            return
-        }
-
-        // Read types (keep this in sync with queries below)
+    private lazy var readTypes: Set<HKObjectType> = {
         let stepType = HKObjectType.quantityType(forIdentifier: .stepCount)!
         let activeEnergyType = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!
         let distanceType = HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning)!
@@ -73,7 +66,7 @@ final class HealthKitManager: ObservableObject {
         let workoutType = HKObjectType.workoutType()
         let activitySummaryType = HKObjectType.activitySummaryType()
 
-        let toRead: Set<HKObjectType> = [
+        return [
             stepType,
             activeEnergyType,
             distanceType,
@@ -90,14 +83,48 @@ final class HealthKitManager: ObservableObject {
             workoutType,
             activitySummaryType
         ]
+    }()
+
+    // Requests HealthKit read authorization for all data types used by this manager.
+    func requestAuthorization() async {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            statusText = "Health data not available on this device."
+            return
+        }
 
         do {
-            try await healthStore.requestAuthorization(toShare: [], read: toRead)
+            try await healthStore.requestAuthorization(toShare: [], read: readTypes)
             isAuthorized = true
             statusText = "Authorized ✅"
         } catch {
             isAuthorized = false
             statusText = "Authorization failed: \(error.localizedDescription)"
+        }
+    }
+
+    func refreshAuthorizationStatus() async {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            isAuthorized = false
+            statusText = "Health data not available on this device."
+            return
+        }
+
+        let status: HKAuthorizationRequestStatus = await withCheckedContinuation { cont in
+            healthStore.getRequestStatusForAuthorization(toShare: [], read: readTypes) { status, _ in
+                cont.resume(returning: status)
+            }
+        }
+
+        if status == .unnecessary {
+            isAuthorized = true
+            if statusText == "Not authorized" {
+                statusText = "Authorized ✅"
+            }
+        } else {
+            isAuthorized = false
+            if statusText == "Authorized ✅" {
+                statusText = "Not authorized"
+            }
         }
     }
 
