@@ -9,31 +9,6 @@ import Foundation
 import HealthKit
 import Combine
 
-// MARK: - UI models
-
-struct RingsSummary: Identifiable {
-    let id = UUID()
-    let date: Date
-
-    let move: Double
-    let moveGoal: Double
-
-    let exerciseMinutes: Double
-    let exerciseGoalMinutes: Double
-
-    let standHours: Double
-    let standGoalHours: Double
-}
-
-struct WorkoutSummary: Identifiable {
-    let id = UUID()
-    let type: String
-    let start: Date
-    let end: Date
-    let durationMinutes: Double
-    let activeEnergy: Double?
-    let distance: Double?
-}
 
 // MARK: - HealthKit manager
 
@@ -60,6 +35,12 @@ final class HealthKitManager: ObservableObject {
     @Published var hrv7d: [(date: Date, value: Double)] = []
     @Published var distance7dMeters: [(date: Date, value: Double)] = []
     @Published var steps7d: [(date: Date, value: Double)] = []
+    @Published var activeEnergy7dKcal: [(date: Date, value: Double)] = []
+    @Published var exerciseMinutes7d: [(date: Date, value: Double)] = []
+    @Published var standHours7d: [(date: Date, value: Double)] = []
+    @Published var flightsClimbed7d: [(date: Date, value: Double)] = []
+    @Published var mindfulMinutes7d: [(date: Date, value: Double)] = []
+    @Published var vo2MaxRecent: [(date: Date, value: Double)] = []
 
     // Requests HealthKit read authorization for all data types used by this manager.
     func requestAuthorization() async {
@@ -75,6 +56,9 @@ final class HealthKitManager: ObservableObject {
         let restingHRType = HKObjectType.quantityType(forIdentifier: .restingHeartRate)!
         let hrvType = HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN)!
         let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
+        let mindfulType = HKObjectType.categoryType(forIdentifier: .mindfulSession)!
+        let flightsType = HKObjectType.quantityType(forIdentifier: .flightsClimbed)!
+        let vo2Type = HKObjectType.quantityType(forIdentifier: .vo2Max)!
         let workoutType = HKObjectType.workoutType()
         let activitySummaryType = HKObjectType.activitySummaryType()
 
@@ -85,6 +69,9 @@ final class HealthKitManager: ObservableObject {
             restingHRType,
             hrvType,
             sleepType,
+            mindfulType,
+            flightsType,
+            vo2Type,
             workoutType,
             activitySummaryType
         ]
@@ -121,6 +108,16 @@ final class HealthKitManager: ObservableObject {
         async let sleepTask = fetchSleepHours7d(daysBack: 7)
         async let rhrTask = fetchDailyMostRecentPerDay(.restingHeartRate, unit: .count().unitDivided(by: .minute()), daysBack: 7)
         async let hrvTask = fetchDailyMostRecentPerDay(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), daysBack: 7)
+        async let flightsTask = fetchDailyCumulativeSum(.flightsClimbed, unit: .count(), daysBack: 7)
+        async let mindfulTask = fetchDailyCategoryMinutes(.mindfulSession, daysBack: 7)
+        async let vo2Task = fetchRecentQuantitySamples(
+            .vo2Max,
+            unit: HKUnit.literUnit(with: .milli)
+                .unitDivided(by: .gramUnit(with: .kilo))
+                .unitDivided(by: .minute()),
+            daysBack: 180,
+            limit: 8
+        )
 
         do {
             let ((ringsPretty, ringsHK),
@@ -130,7 +127,10 @@ final class HealthKitManager: ObservableObject {
                  distanceVal,
                  sleepVal,
                  rhrVal,
-                 hrvVal) = try await (
+                 hrvVal,
+                 flightsVal,
+                 mindfulVal,
+                 vo2Val) = try await (
                     ringsTask,
                     energyTask,
                     workoutsTask,
@@ -138,7 +138,10 @@ final class HealthKitManager: ObservableObject {
                     distanceTask,
                     sleepTask,
                     rhrTask,
-                    hrvTask
+                    hrvTask,
+                    flightsTask,
+                    mindfulTask,
+                    vo2Task
                  )
 
             // Publish in one “commit” block
@@ -152,6 +155,14 @@ final class HealthKitManager: ObservableObject {
             sleep7dHours = sleepVal.map { (date: $0.date, value: $0.hours) }
             restingHR7d = rhrVal
             hrv7d = hrvVal
+            flightsClimbed7d = flightsVal
+            mindfulMinutes7d = mindfulVal
+            vo2MaxRecent = vo2Val
+
+            let activitySeries = buildActivitySeries(from: ringsPretty, daysBack: 7)
+            activeEnergy7dKcal = activitySeries.move
+            exerciseMinutes7d = activitySeries.exercise
+            standHours7d = activitySeries.stand
 
             statusText = "Fetched ✅ (rings \(ringsPretty.count), workouts \(workoutsVal.count))"
         } catch {
@@ -167,6 +178,34 @@ final class HealthKitManager: ObservableObject {
         let end = Date()
         let start = cal.startOfDay(for: cal.date(byAdding: .day, value: -daysBack + 1, to: end)!)
         return (start, end, cal)
+    }
+
+    private func buildActivitySeries(from rings: [RingsSummary], daysBack: Int)
+        -> (move: [(date: Date, value: Double)],
+            exercise: [(date: Date, value: Double)],
+            stand: [(date: Date, value: Double)]) {
+        let cal = Calendar.current
+        let todayStart = cal.startOfDay(for: Date())
+        let firstDay = cal.startOfDay(for: cal.date(byAdding: .day, value: -daysBack + 1, to: todayStart)!)
+
+        var byDay: [Date: RingsSummary] = [:]
+        for r in rings {
+            byDay[cal.startOfDay(for: r.date)] = r
+        }
+
+        var move: [(Date, Double)] = []
+        var exercise: [(Date, Double)] = []
+        var stand: [(Date, Double)] = []
+
+        for i in 0..<daysBack {
+            guard let day = cal.date(byAdding: .day, value: i, to: firstDay) else { continue }
+            let r = byDay[day]
+            move.append((day, r?.move ?? 0))
+            exercise.append((day, r?.exerciseMinutes ?? 0))
+            stand.append((day, r?.standHours ?? 0))
+        }
+
+        return (move, exercise, stand)
     }
 
     // Fetches a per-day time series for quantity types that are meaningful as daily totals (steps, distance, etc).
@@ -260,6 +299,80 @@ final class HealthKitManager: ObservableObject {
         }
 
         return out
+    }
+
+    // Fetches total minutes per day for category samples like Mindful Sessions.
+    private func fetchDailyCategoryMinutes(
+        _ identifier: HKCategoryTypeIdentifier,
+        daysBack: Int
+    ) async throws -> [(date: Date, value: Double)] {
+        let (start, end, cal) = dayRange(daysBack: daysBack)
+        let type = HKObjectType.categoryType(forIdentifier: identifier)!
+
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+
+        let samples: [HKCategorySample] = try await withCheckedThrowingContinuation { cont in
+            let q = HKSampleQuery(
+                sampleType: type,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [sort]
+            ) { _, samples, error in
+                if let error = error { cont.resume(throwing: error); return }
+                cont.resume(returning: (samples as? [HKCategorySample]) ?? [])
+            }
+            self.healthStore.execute(q)
+        }
+
+        var totals: [Date: TimeInterval] = [:]
+        for s in samples {
+            let day = cal.startOfDay(for: s.startDate)
+            totals[day, default: 0] += s.endDate.timeIntervalSince(s.startDate)
+        }
+
+        var out: [(date: Date, value: Double)] = []
+        out.reserveCapacity(daysBack)
+
+        let firstDay = cal.startOfDay(for: start)
+        for i in 0..<daysBack {
+            guard let day = cal.date(byAdding: .day, value: i, to: firstDay) else { continue }
+            let minutes = (totals[day] ?? 0) / 60.0
+            out.append((date: day, value: minutes))
+        }
+
+        return out
+    }
+
+    // Fetches recent samples for metrics that are not guaranteed daily (e.g. VO2 Max).
+    private func fetchRecentQuantitySamples(
+        _ identifier: HKQuantityTypeIdentifier,
+        unit: HKUnit,
+        daysBack: Int,
+        limit: Int
+    ) async throws -> [(date: Date, value: Double)] {
+        let (start, end, _) = dayRange(daysBack: daysBack)
+        let type = HKQuantityType.quantityType(forIdentifier: identifier)!
+
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+
+        let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { cont in
+            let q = HKSampleQuery(
+                sampleType: type,
+                predicate: predicate,
+                limit: limit,
+                sortDescriptors: [sort]
+            ) { _, samples, error in
+                if let error = error { cont.resume(throwing: error); return }
+                cont.resume(returning: (samples as? [HKQuantitySample]) ?? [])
+            }
+            self.healthStore.execute(q)
+        }
+
+        return samples
+            .reversed()
+            .map { (date: $0.endDate, value: $0.quantity.doubleValue(for: unit)) }
     }
 
     // MARK: - Rings (Activity Summary)
@@ -356,7 +469,7 @@ final class HealthKitManager: ObservableObject {
                 if let error = error { cont.resume(throwing: error); return }
 
                 let workouts = (samples as? [HKWorkout] ?? []).map { (w: HKWorkout) -> WorkoutSummary in
-                    let typeName = w.workoutActivityType.name
+                    let typeName = w.workoutActivityType.displayName
                     let durationMin = w.duration / 60.0
 
                     let energy: Double?
@@ -440,18 +553,17 @@ final class HealthKitManager: ObservableObject {
 
 // MARK: - Helper for activity type names
 
-private extension HKWorkoutActivityType {
-    var name: String {
-        switch self {
-        case .running: return "Running"
-        case .walking: return "Walking"
-        case .traditionalStrengthTraining: return "Strength Training"
-        case .cycling: return "Cycling"
-        case .yoga: return "Yoga"
-        case .hiking: return "Hiking"
-        case .swimming: return "Swimming"
-        default: return self.rawValue.description
-        }
-    }
-}
-
+//private extension HKWorkoutActivityType {
+//    var name: String {
+//        switch self {
+//        case .running: return "Running"
+//        case .walking: return "Walking"
+//        case .traditionalStrengthTraining: return "Strength Training"
+//        case .cycling: return "Cycling"
+//        case .yoga: return "Yoga"
+//        case .hiking: return "Hiking"
+//        case .swimming: return "Swimming"
+//        default: return self.rawValue.description
+//        }
+//    }
+//}
